@@ -1,0 +1,272 @@
+############################################################
+# PRÁCTICA: Diseño simple de primers en R
+# Autor: (tu nombre)
+# Curso: Sistemas Bioinformáticos
+#
+# Requisitos:
+#  - R y RStudio
+#  - Conexión a internet (solo si usas la descarga directa de NCBI)
+#  - O un archivo FASTA descargado a mano desde NCBI
+############################################################
+
+############################################################
+# 0. (OPCIONAL) Función para descargar una secuencia FASTA
+#    desde NCBI usando un número de acceso (accession).
+#    Ejemplo de accession: "NM_000207" (INS humana), etc.
+############################################################
+
+download_ncbi_fasta <- function(accession, outfile = "secuencia_ncbi.fasta") {
+  # Construimos una URL simple al visor de NCBI en formato FASTA
+  base_url <- "https://www.ncbi.nlm.nih.gov/sviewer/viewer.fcgi"
+  
+  full_url <- paste0(
+    base_url,
+    "?id=", accession,
+    "&db=nuccore",
+    "&report=fasta",
+    "&retmode=text"
+  )
+  
+  message("Descargando FASTA desde: ", full_url)
+  download.file(full_url, destfile = outfile, quiet = FALSE)
+  message("Archivo guardado como: ", outfile)
+}
+
+############################################################
+# 1. Función para leer una secuencia FASTA desde disco
+#    (sirve tanto si la descargaste con la función anterior
+#     como si la bajaste manualmente desde NCBI).
+############################################################
+
+read_fasta_sequence <- function(path) {
+  # Lee todas las líneas del archivo FASTA
+  lines <- readLines(path, warn = FALSE)
+  
+  # Quitamos líneas de encabezado (las que empiezan con ">")
+  seq_lines <- lines[!grepl("^>", lines)]
+  
+  # Pegamos todo en una sola cadena, quitando espacios
+  seq <- paste(seq_lines, collapse = "")
+  seq <- gsub("\\s+", "", seq)      # elimina espacios en blanco
+  seq <- toupper(seq)              # pasamos a mayúsculas
+  
+  # Dejamos solo A, C, G, T (por si hubiera N u otros símbolos)
+  seq <- gsub("[^ACGT]", "", seq)
+  
+  return(seq)
+}
+
+############################################################
+# 2. Funciones auxiliares
+#    - Contenido GC
+#    - Reverso complementaria
+#    - Tm (regla de Wallace)
+#    - Checar si un candidato de primer cumple criterios
+############################################################
+
+# Contenido GC en porcentaje
+gc_content <- function(seq) {
+  bases <- strsplit(seq, "")[[1]]
+  gc <- sum(bases %in% c("G", "C"))
+  return(100 * gc / length(bases))
+}
+
+# Reverso complementaria
+reverse_complement <- function(seq) {
+  bases <- strsplit(seq, "")[[1]]
+  
+  # Tabla de complementos
+  comp_table <- c(A = "T", T = "A", G = "C", C = "G")
+  
+  comp <- comp_table[bases]
+  rev_comp <- rev(comp)
+  
+  return(paste0(rev_comp, collapse = ""))
+}
+
+# Temperatura de alineamiento (Tm) con la regla de Wallace
+# Tm ≈ 2*(A+T) + 4*(G+C)
+tm_wallace <- function(seq) {
+  bases <- strsplit(seq, "")[[1]]
+  at <- sum(bases %in% c("A", "T"))
+  gc <- sum(bases %in% c("G", "C"))
+  return(2 * at + 4 * gc)
+}
+
+# Evaluación de un primer según criterios simples:
+# - GC entre gc_min y gc_max
+# - Tm entre tm_min y tm_max
+# - No más de max_run bases iguales consecutivas
+check_primer <- function(primer,
+                         gc_min = 40, gc_max = 60,
+                         tm_min = 55, tm_max = 65,
+                         max_run = 4) {
+  
+  bases <- strsplit(primer, "")[[1]]
+  gc <- gc_content(primer)
+  tm <- tm_wallace(primer)
+  
+  # Runs de bases iguales (Aaaa, CCCC, etc.)
+  runs <- rle(bases)
+  if (any(runs$lengths > max_run)) {
+    return(FALSE)
+  }
+  
+  if (gc < gc_min || gc > gc_max) {
+    return(FALSE)
+  }
+  
+  if (tm < tm_min || tm > tm_max) {
+    return(FALSE)
+  }
+  
+  return(TRUE)
+}
+
+############################################################
+# 3. Funciones para buscar primers Forward y Reverse
+############################################################
+
+# Busca un primer forward en la región 5' de la secuencia
+find_forward_primer <- function(seq,
+                                primer_len = 20,
+                                region_start = 1,
+                                region_end = 200,
+                                gc_min = 40, gc_max = 60,
+                                tm_min = 55, tm_max = 65,
+                                max_run = 4) {
+  
+  n <- nchar(seq)
+  region_end <- min(region_end, n - primer_len + 1)
+  
+  for (i in region_start:region_end) {
+    candidate <- substring(seq, i, i + primer_len - 1)
+    
+    if (check_primer(candidate,
+                     gc_min = gc_min, gc_max = gc_max,
+                     tm_min = tm_min, tm_max = tm_max,
+                     max_run = max_run)) {
+      return(list(
+        seq = candidate,
+        start = i,
+        end = i + primer_len - 1,
+        gc = gc_content(candidate),
+        tm = tm_wallace(candidate)
+      ))
+    }
+  }
+  
+  return(NULL)  # Si no encuentra nada
+}
+
+# Busca un primer reverse en la región 3' de la secuencia
+# Nota: el fragmento de ADN se toma de la cadena "sense",
+#       pero el primer que se sintetiza es la reverso complementaria.
+find_reverse_primer <- function(seq,
+                                primer_len = 20,
+                                region_size = 200,
+                                gc_min = 40, gc_max = 60,
+                                tm_min = 55, tm_max = 65,
+                                max_run = 4) {
+  
+  n <- nchar(seq)
+  
+  # Definimos una región hacia el 3' (extremo derecho)
+  region_start <- max(1, n - region_size - primer_len + 1)
+  region_end   <- n - primer_len + 1
+  
+  # Recorremos de derecha a izquierda para acercarnos al extremo 3'
+  for (i in seq(region_end, region_start, by = -1)) {
+    fragment <- substring(seq, i, i + primer_len - 1)
+    primer   <- reverse_complement(fragment)  # secuencia del oligo
+    
+    if (check_primer(primer,
+                     gc_min = gc_min, gc_max = gc_max,
+                     tm_min = tm_min, tm_max = tm_max,
+                     max_run = max_run)) {
+      return(list(
+        seq = primer,
+        binding_start = i,
+        binding_end = i + primer_len - 1,
+        gc = gc_content(primer),
+        tm = tm_wallace(primer)
+      ))
+    }
+  }
+  
+  return(NULL)
+}
+
+############################################################
+# 4. "Main": aquí corre realmente la práctica
+############################################################
+
+# 4.1. Directorio de trabajo (ajusta a tu ruta)
+# setwd("C:/ruta/a/tu/carpeta")  # En Windows
+# setwd("/home/usuario/proyecto")  # En Linux/Mac
+
+# OPCIÓN A) Descarga directa desde NCBI (si tienes internet)
+# Descomenta estas líneas y pon el accession de tu gen de interés:
+# accession_id <- "NM_000207"  # Ejemplo: gen de insulina humana
+# download_ncbi_fasta(accession_id, outfile = "mi_gen.fasta")
+# fasta_file <- "mi_gen.fasta"
+
+# OPCIÓN B) Usar un archivo FASTA descargado a mano desde NCBI
+# Ve a NCBI → Nucleotide → busca tu gen → "Send to" → File → FASTA
+# guarda como "mi_gen.fasta" (o el nombre que quieras) en tu carpeta
+fasta_file <- "mi_gen.fasta"   # Cambia si tu archivo tiene otro nombre
+
+# 4.2. Leer la secuencia
+seq <- read_fasta_sequence(fasta_file)
+
+cat("Longitud de la secuencia cargada:", nchar(seq), "bp\n")
+
+# 4.3. Buscar primer forward y reverse
+forward_primer <- find_forward_primer(
+  seq,
+  primer_len = 20,
+  region_start = 1,
+  region_end = 200    # primeros 200 nt
+)
+
+reverse_primer <- find_reverse_primer(
+  seq,
+  primer_len = 20,
+  region_size = 200   # últimos 200 nt
+)
+
+############################################################
+# 4.4. Mostrar resultados
+############################################################
+
+if (is.null(forward_primer)) {
+  cat("\nNO se encontró un primer forward que cumpla los criterios.\n")
+} else {
+  cat("\n=== Primer FORWARD (5' -> 3') ===\n")
+  cat("Secuencia:", forward_primer$seq, "\n")
+  cat("Posición en el gen:", forward_primer$start, "-", forward_primer$end, "\n")
+  cat(sprintf("GC: %.2f%%\n", forward_primer$gc))
+  cat(sprintf("Tm (Wallace): %.2f °C\n", forward_primer$tm))
+}
+
+if (is.null(reverse_primer)) {
+  cat("\nNO se encontró un primer reverse que cumpla los criterios.\n")
+} else {
+  cat("\n=== Primer REVERSE (5' -> 3') ===\n")
+  cat("Secuencia:", reverse_primer$seq, "\n")
+  cat("Región de unión en el gen (cadena sense):",
+      reverse_primer$binding_start, "-",
+      reverse_primer$binding_end, "\n")
+  cat(sprintf("GC: %.2f%%\n", reverse_primer$gc))
+  cat(sprintf("Tm (Wallace): %.2f °C\n", reverse_primer$tm))
+}
+
+# 4.5. Tamaño del amplicón (si se encontraron ambos primers)
+if (!is.null(forward_primer) && !is.null(reverse_primer)) {
+  amplicon_size <- reverse_primer$binding_end - forward_primer$start + 1
+  cat("\n=== Amplicón estimado ===\n")
+  cat("Tamaño aproximado del fragmento amplificado:",
+      amplicon_size, "bp\n")
+} else {
+  cat("\nNo se puede calcular el amplicón porque falta algún primer.\n")
+}
