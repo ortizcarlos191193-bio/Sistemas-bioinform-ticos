@@ -1,0 +1,155 @@
+############################################################
+# PRÁCTICA: Diseño de primers para covid.fasta
+############################################################
+
+# 1. Función para leer una secuencia FASTA -----------------
+read_fasta_sequence <- function(path) {
+  lines <- readLines(path, warn = FALSE)
+  seq_lines <- lines[!grepl("^>", lines)]         # elimina encabezado
+  seq <- paste(seq_lines, collapse = "")         # junta todo
+  seq <- gsub("\\s+", "", seq)                   # quita espacios
+  seq <- toupper(seq)                            # a mayúsculas
+  seq <- gsub("[^ACGT]", "", seq)                # deja solo A,C,G,T
+  return(seq)
+}
+
+# 2. Funciones auxiliares ----------------------------------
+
+gc_content <- function(seq) {
+  bases <- strsplit(seq, "")[[1]]
+  gc <- sum(bases %in% c("G", "C"))
+  100 * gc / length(bases)
+}
+
+reverse_complement <- function(seq) {
+  bases <- strsplit(seq, "")[[1]]
+  comp_table <- c(A = "T", T = "A", G = "C", C = "G")
+  comp <- comp_table[bases]
+  rev_comp <- rev(comp)
+  paste0(rev_comp, collapse = "")
+}
+
+tm_wallace <- function(seq) {
+  bases <- strsplit(seq, "")[[1]]
+  at <- sum(bases %in% c("A", "T"))
+  gc <- sum(bases %in% c("G", "C"))
+  2 * at + 4 * gc
+}
+
+check_primer <- function(primer,
+                         gc_min = 40, gc_max = 60,
+                         tm_min = 55, tm_max = 65,
+                         max_run = 4) {
+  
+  bases <- strsplit(primer, "")[[1]]
+  gc <- gc_content(primer)
+  tm <- tm_wallace(primer)
+  
+  runs <- rle(bases)
+  if (any(runs$lengths > max_run)) return(FALSE)
+  if (gc < gc_min || gc > gc_max) return(FALSE)
+  if (tm < tm_min || tm > tm_max) return(FALSE)
+  
+  TRUE
+}
+
+# 3. Búsqueda de primer forward y reverse ------------------
+
+find_forward_primer <- function(seq,
+                                primer_len = 20,
+                                region_start = 1,
+                                region_end = 200) {
+  n <- nchar(seq)
+  region_end <- min(region_end, n - primer_len + 1)
+  
+  for (i in region_start:region_end) {
+    candidate <- substring(seq, i, i + primer_len - 1)
+    if (check_primer(candidate)) {
+      return(list(
+        seq = candidate,
+        start = i,
+        end = i + primer_len - 1,
+        gc = gc_content(candidate),
+        tm = tm_wallace(candidate)
+      ))
+    }
+  }
+  NULL
+}
+
+find_reverse_primer <- function(seq,
+                                primer_len = 20,
+                                region_size = 200) {
+  n <- nchar(seq)
+  region_start <- max(1, n - region_size - primer_len + 1)
+  region_end <- n - primer_len + 1
+  
+  for (i in seq(region_end, region_start, by = -1)) {
+    fragment <- substring(seq, i, i + primer_len - 1)
+    primer <- reverse_complement(fragment)
+    if (check_primer(primer)) {
+      return(list(
+        seq = primer,
+        binding_start = i,
+        binding_end = i + primer_len - 1,
+        gc = gc_content(primer),
+        tm = tm_wallace(primer)
+      ))
+    }
+  }
+  NULL
+}
+
+# 4. MAIN: aplicar todo a covid.fasta ----------------------
+
+# Ajusta el directorio de trabajo si lo necesitas:
+# setwd("C:/ruta/a/tu/carpeta")  # ejemplo Windows
+# setwd("/home/usuario/proyecto") # ejemplo Linux/Mac
+
+fasta_file <- "covid.fasta"
+
+seq <- read_fasta_sequence(fasta_file)
+cat("Longitud de la secuencia:", nchar(seq), "bp\n")
+
+forward_primer <- find_forward_primer(
+  seq,
+  primer_len = 20,
+  region_start = 1,
+  region_end = 200
+)
+
+reverse_primer <- find_reverse_primer(
+  seq,
+  primer_len = 20,
+  region_size = 200
+)
+
+# 5. Resultados --------------------------------------------
+
+if (is.null(forward_primer)) {
+  cat("\nNO se encontró primer FORWARD con los criterios.\n")
+} else {
+  cat("\n=== Primer FORWARD (5' -> 3') ===\n")
+  cat("Secuencia:", forward_primer$seq, "\n")
+  cat("Posición:", forward_primer$start, "-", forward_primer$end, "\n")
+  cat(sprintf("GC: %.2f%%\n", forward_primer$gc))
+  cat(sprintf("Tm: %.2f °C\n", forward_primer$tm))
+}
+
+if (is.null(reverse_primer)) {
+  cat("\nNO se encontró primer REVERSE con los criterios.\n")
+} else {
+  cat("\n=== Primer REVERSE (5' -> 3') ===\n")
+  cat("Secuencia:", reverse_primer$seq, "\n")
+  cat("Región de unión (cadena sense):",
+      reverse_primer$binding_start, "-",
+      reverse_primer$binding_end, "\n")
+  cat(sprintf("GC: %.2f%%\n", reverse_primer$gc))
+  cat(sprintf("Tm: %.2f °C\n", reverse_primer$tm))
+}
+
+if (!is.null(forward_primer) && !is.null(reverse_primer)) {
+  amplicon_size <- reverse_primer$binding_end - forward_primer$start + 1
+  cat("\n=== Amplicón estimado ===\n")
+  cat("Tamaño:", amplicon_size, "bp\n")
+}
