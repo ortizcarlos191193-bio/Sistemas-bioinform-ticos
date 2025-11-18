@@ -1,0 +1,115 @@
+# ==========================================
+# PRÁCTICA 6: Contenido GC y GC skew (versión ligera)
+# ==========================================
+# NO requiere Bioconductor ni Rtools.
+# Solo usa R base y el paquete stringr.
+# ==========================================
+
+# Instalamos stringr si no está disponible
+if (!requireNamespace("stringr", quietly = TRUE)) install.packages("stringr")
+library(stringr)
+
+# -------------------------------
+# 1. Crear archivo FASTA de ejemplo
+# -------------------------------
+
+# Si ya tienes tu propio FASTA, cambia la ruta.
+fasta_path <- "ejemplo_gc.fasta"
+
+cat(
+  paste0(
+    ">Secuencia_1\n",
+    "ATGGCCATTGTAATGGGCCGCTGAAAGGGTGCCCGATAG\n",
+    ">Secuencia_2\n",
+    "GGGCGGCGGCGGCCGTTATTTATATATATATATATACGC\n"
+  ),
+  file = fasta_path
+)
+
+# -------------------------------
+# 2. Leer el archivo FASTA manualmente
+# -------------------------------
+
+read_fasta_simple <- function(path) {
+  lines <- readLines(path)
+  headers <- lines[grepl("^>", lines)]
+  seqs <- c()
+  current_seq <- ""
+  for (line in lines) {
+    if (startsWith(line, ">")) {
+      if (nchar(current_seq) > 0) seqs <- c(seqs, current_seq)
+      current_seq <- ""
+    } else {
+      current_seq <- paste0(current_seq, toupper(line))
+    }
+  }
+  seqs <- c(seqs, current_seq)
+  data.frame(id = sub("^>", "", headers), seq = seqs, stringsAsFactors = FALSE)
+}
+
+dna <- read_fasta_simple(fasta_path)
+print(dna)
+
+# -------------------------------
+# 3. Funciones para GC% y GC skew
+# -------------------------------
+
+gc_content <- function(seq) {
+  seq <- toupper(seq)
+  G <- str_count(seq, "G")
+  C <- str_count(seq, "C")
+  A <- str_count(seq, "A")
+  T <- str_count(seq, "T")
+  gc <- (G + C) / (A + T + G + C) * 100
+  return(gc)
+}
+
+gc_skew <- function(seq) {
+  seq <- toupper(seq)
+  G <- str_count(seq, "G")
+  C <- str_count(seq, "C")
+  skew <- (G - C) / (G + C)
+  return(skew)
+}
+
+# -------------------------------
+# 4. Calcular y mostrar resultados
+# -------------------------------
+
+for (i in 1:nrow(dna)) {
+  cat("\n---", dna$id[i], "---\n")
+  cat("GC%:", gc_content(dna$seq[i]), "\n")
+  cat("GC skew:", gc_skew(dna$seq[i]), "\n")
+}
+
+# -------------------------------
+# 5. Análisis por ventanas
+# -------------------------------
+
+seq <- dna$seq[1]
+window_size <- 10
+step <- 1
+
+gc_values <- sapply(seq(1, nchar(seq) - window_size + 1, by = step), function(i) {
+  substring <- substr(seq, i, i + window_size - 1)
+  gc_content(substring)
+})
+
+plot(gc_values, type = "l", col = "blue",
+     xlab = "Posición en la secuencia (nt)",
+     ylab = "% GC",
+     main = paste("Perfil GC% -", dna$id[1]))
+
+# -------------------------------
+# 6. Guardar resultados
+# -------------------------------
+
+resultados <- data.frame(
+  Secuencia = dna$id,
+  GC_percent = sapply(dna$seq, gc_content),
+  GC_skew = sapply(dna$seq, gc_skew)
+)
+write.csv(resultados, "resultados_GC.csv", row.names = FALSE)
+print(resultados)
+
+cat("\nListo: se ha generado el archivo 'resultados_GC.csv' con los valores calculados.\n")
