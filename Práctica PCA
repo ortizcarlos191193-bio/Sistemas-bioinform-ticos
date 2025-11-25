@@ -1,0 +1,142 @@
+###############################################################
+# PRÁCTICA: PCA con descriptores moleculares y actividad biológica
+# Curso: Bioinformática / QFB
+# Objetivo: Aplicar PCA a un conjunto de fármacos simulados,
+#           visualizar PC1–PC2 e interpretar su relación con
+#           descriptores y actividad (Activa: Sí/No).
+###############################################################
+
+###############
+# SECCIÓN 1
+# Generación del dataset con "regla oculta"
+###############
+
+set.seed(123)
+n <- 100
+
+# Descriptores simulados
+MW   <- rnorm(n, mean = 300, sd = 50)    # Peso molecular
+LogP <- rnorm(n, mean = 2.5, sd = 1.0)   # Lipofilicidad
+TPSA <- rnorm(n, mean = 80,  sd = 20)    # Área polar
+HBD  <- rpois(n, lambda = 1.5)           # Donadores de H
+HBA  <- rpois(n, lambda = 4)             # Aceptores de H
+
+# Regla oculta (score lineal tipo QSAR)
+score_lineal <- -5 +
+  0.01*MW +
+  0.8*LogP -
+  0.015*TPSA -
+  0.2*HBD +
+  0.1*HBA
+
+# Probabilidad de actividad (función logística)
+prob_actividad <- 1 / (1 + exp(-score_lineal))
+
+# Etiqueta binaria de actividad
+Actividad <- rbinom(n, size = 1, prob = prob_actividad)
+
+# Data frame final
+farmacos <- data.frame(
+  MW = MW,
+  LogP = LogP,
+  TPSA = TPSA,
+  HBD = HBD,
+  HBA = HBA,
+  Activa = factor(Actividad, levels = c(0,1), labels = c("No","Si")),
+  score_lineal = score_lineal
+)
+
+head(farmacos)
+summary(farmacos)
+table(farmacos$Activa)
+
+###############
+# SECCIÓN 2
+# Preparación de datos para PCA
+###############
+
+# Solo descriptores numéricos
+descriptores <- farmacos[, c("MW","LogP","TPSA","HBD","HBA")]
+
+# Estandarización (z-scores)
+descriptores_scaled <- scale(descriptores)
+
+###############
+# SECCIÓN 3
+# Cálculo de PCA con prcomp
+###############
+
+pca <- prcomp(descriptores_scaled,
+              center = TRUE,
+              scale. = TRUE)
+
+# Resumen de varianza explicada
+summary(pca)
+
+# Cargas (loadings)
+pca$rotation
+
+###############
+# SECCIÓN 4
+# Visualización PC1 vs PC2 coloreando por actividad
+###############
+
+pc_df <- data.frame(
+  PC1 = pca$x[,1],
+  PC2 = pca$x[,2],
+  Activa = farmacos$Activa
+)
+
+# Gráfico sencillo PC1 vs PC2
+plot(pc_df$PC1, pc_df$PC2,
+     xlab = "PC1",
+     ylab = "PC2",
+     main = "PCA de descriptores moleculares",
+     pch = 19,
+     col = pc_df$Activa)
+
+legend("topright",
+       legend = levels(pc_df$Activa),
+       pch = 19,
+       col = 1:length(levels(pc_df$Activa)),
+       title = "Actividad")
+
+###############
+# SECCIÓN 5
+# Interpretación de cargas (loadings)
+###############
+
+# Mostrar cargas de los 2 primeros componentes
+loadings_PC1_PC2 <- pca$rotation[,1:2]
+loadings_PC1_PC2
+
+# Opcional: gráfico tipo "flechas" muy simple
+# (no es un biplot clásico, pero da idea)
+arrows(0, 0,
+       loadings_PC1_PC2[,1],
+       loadings_PC1_PC2[,2],
+       length = 0.1)
+text(loadings_PC1_PC2[,1],
+     loadings_PC1_PC2[,2],
+     labels = rownames(loadings_PC1_PC2),
+     pos = 3)
+
+###############
+# SECCIÓN 6
+# Relación entre PC1 y la "regla oculta"
+###############
+
+# Correlación entre PC1 y score_lineal
+cor_PC1_score <- cor(pc_df$PC1, farmacos$score_lineal)
+cor_PC1_score
+
+# Gráfico PC1 vs score_lineal
+plot(farmacos$score_lineal, pc_df$PC1,
+     xlab = "Score lineal (regla oculta)",
+     ylab = "PC1",
+     main = "Relación entre PC1 y regla oculta")
+abline(lm(pc_df$PC1 ~ farmacos$score_lineal))
+
+###############################################################
+# FIN DE LA PRÁCTICA DE PCA
+###############################################################
