@@ -1,20 +1,27 @@
-# Semilla para reproducibilidad
-set.seed(123)
+###############################################################
+# PRÁCTICA: Métodos Supervisados con Fármacos y Descriptores
+# Curso: Bioinformática / QFB
+# Autor: Carlos A. Ortiz
+# Objetivo: Entrenar modelos (Logístico y Random Forest)
+#          para predecir actividad biológica a partir de 
+#          descriptores moleculares simulados.
+###############################################################
 
-# Número de moléculas
+###############
+# SECCIÓN 1
+# Generación del dataset
+###############
+
+set.seed(123)
 n <- 100
 
-# Simulación de descriptores (valores aproximados a la realidad)
-MW   <- rnorm(n, mean = 300, sd = 50)   # Peso molecular
-LogP <- rnorm(n, mean = 2.5, sd = 1.0)  # Lipofilicidad
-TPSA <- rnorm(n, mean = 80,  sd = 20)   # Área polar
-HBD  <- rpois(n, lambda = 1.5)          # Donadores de H
-HBA  <- rpois(n, lambda = 4)            # Aceptores de H
+MW   <- rnorm(n, mean = 300, sd = 50)
+LogP <- rnorm(n, mean = 2.5, sd = 1.0)
+TPSA <- rnorm(n, mean = 80,  sd = 20)
+HBD  <- rpois(n, lambda = 1.5)
+HBA  <- rpois(n, lambda = 4)
 
-# Definimos una "regla oculta" para la actividad biológica
-# Supón que tienden a ser más activos si:
-# MW moderado, LogP entre ~1.5-3.5 y TPSA no muy alta
-
+# "Regla oculta" de actividad (modelo subyacente)
 score_lineal <- -5 + 
   0.01*MW + 
   0.8*LogP - 
@@ -22,15 +29,97 @@ score_lineal <- -5 +
   0.2*HBD + 
   0.1*HBA
 
-prob_actividad <- 1 / (1 + exp(-score_lineal))  # función logística
-
+prob_actividad <- 1 / (1 + exp(-score_lineal))
 Actividad <- rbinom(n, size = 1, prob = prob_actividad)
 
-# Armamos el data frame
 farmacos <- data.frame(
   MW = MW,
   LogP = LogP,
   TPSA = TPSA,
+  HBD = HBD,
+  HBA = HBA,
+  Activa = factor(Actividad, levels = c(0,1), labels = c("No","Si"))
+)
+
+head(farmacos)
+summary(farmacos)
+table(farmacos$Activa)
+
+###############
+# SECCIÓN 2
+# División entrenamiento/prueba (70/30)
+###############
+
+set.seed(123)
+indice <- sample(1:nrow(farmacos), size = 0.7*nrow(farmacos))
+
+train <- farmacos[indice, ]
+test  <- farmacos[-indice, ]
+
+###############
+# SECCIÓN 3
+# Modelo 1: Regresión Logística
+###############
+
+modelo_logit <- glm(
+  Activa ~ MW + LogP + TPSA + HBD + HBA,
+  data = train,
+  family = binomial
+)
+
+summary(modelo_logit)
+
+# Probabilidades de actividad en datos de prueba
+prob_test <- predict(modelo_logit, newdata = test, type = "response")
+
+# Clasificación binaria (umbral 0.5)
+pred_test <- ifelse(prob_test >= 0.5, "Si", "No")
+pred_test <- factor(pred_test, levels = c("No","Si"))
+
+# Matriz de confusión
+tabla_logit <- table(Real = test$Activa, Predicho = pred_test)
+tabla_logit
+
+# Exactitud
+accuracy_logit <- sum(diag(tabla_logit)) / sum(tabla_logit)
+accuracy_logit
+
+###############
+# SECCIÓN 4
+# Modelo 2: Random Forest
+###############
+
+library(randomForest)
+
+set.seed(123)
+modelo_rf <- randomForest(
+  Activa ~ MW + LogP + TPSA + HBD + HBA,
+  data = train,
+  ntree = 500,
+  mtry = 2,
+  importance = TRUE
+)
+
+modelo_rf
+
+# Predicción
+pred_rf <- predict(modelo_rf, newdata = test)
+
+# Matriz de confusión
+tabla_rf <- table(Real = test$Activa, Predicho = pred_rf)
+tabla_rf
+
+# Exactitud
+accuracy_rf <- sum(diag(tabla_rf)) / sum(tabla_rf)
+accuracy_rf
+
+# Importancia de variables
+importance(modelo_rf)
+varImpPlot(modelo_rf)
+
+###############################################################
+# FIN DE LA PRÁCTICA
+###############################################################
   HBD = HBD,
   HBA = HBA,
   Activa = factor(Actividad, levels = c(0,1), labels = c("No","Si"))
