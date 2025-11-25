@@ -1,0 +1,40 @@
+# Semilla para reproducibilidad
+set.seed(123)
+
+# Número de moléculas
+n <- 100
+
+# Simulación de descriptores (valores aproximados a la realidad)
+MW   <- rnorm(n, mean = 300, sd = 50)   # Peso molecular
+LogP <- rnorm(n, mean = 2.5, sd = 1.0)  # Lipofilicidad
+TPSA <- rnorm(n, mean = 80,  sd = 20)   # Área polar
+HBD  <- rpois(n, lambda = 1.5)          # Donadores de H
+HBA  <- rpois(n, lambda = 4)            # Aceptores de H
+
+# Definimos una "regla oculta" para la actividad biológica
+# Supón que tienden a ser más activos si:
+# MW moderado, LogP entre ~1.5-3.5 y TPSA no muy alta
+
+score_lineal <- -5 + 
+  0.01*MW + 
+  0.8*LogP - 
+  0.015*TPSA - 
+  0.2*HBD + 
+  0.1*HBA
+
+prob_actividad <- 1 / (1 + exp(-score_lineal))  # función logística
+
+Actividad <- rbinom(n, size = 1, prob = prob_actividad)
+
+# Armamos el data frame
+farmacos <- data.frame(
+  MW = MW,
+  LogP = LogP,
+  TPSA = TPSA,
+  HBD = HBD,
+  HBA = HBA,
+  Activa = factor(Actividad, levels = c(0,1), labels = c("No","Si"))
+)
+
+head(farmacos)
+summary(farmacos)
