@@ -1,0 +1,285 @@
+############################################################
+# PRACTICA 4 - SISTEMAS BIOINFORMATICOS
+# Simulación de datos de descriptores y actividad biológica
+# Métodos no supervisados y supervisados:
+# PCA, PLS, SVM y Random Forest
+############################################################
+
+############################
+# 0. INSTALAR Y CARGAR PAQUETES
+############################
+
+# Instalar solo una vez si no los tienen
+# install.packages(c("ggplot2", "pls", "e1071", "randomForest", "caret", "dplyr"))
+
+library(ggplot2)
+library(pls)
+library(e1071)
+library(randomForest)
+library(caret)
+library(dplyr)
+
+############################
+# 1. FIJAR SEMILLA
+############################
+# Para que todos obtengan resultados reproducibles
+
+set.seed(123)
+
+############################
+# 2. SIMULAR UN CONJUNTO DE DATOS
+############################
+# Cada fila será un compuesto
+# Cada columna representa un descriptor molecular o la actividad biológica
+
+n <- 120  # número de compuestos
+
+datos <- data.frame(
+  ID = paste0("Cmp_", 1:n),
+  Peso_Molecular = rnorm(n, mean = 350, sd = 60),
+  LogP = rnorm(n, mean = 2.8, sd = 1.0),
+  PSA = rnorm(n, mean = 80, sd = 20),
+  HBD = sample(0:5, n, replace = TRUE),
+  HBA = sample(1:10, n, replace = TRUE),
+  Flexibilidad = sample(1:12, n, replace = TRUE),
+  Aromaticidad = sample(0:4, n, replace = TRUE),
+  Solubilidad = rnorm(n, mean = -3.0, sd = 1.0)
+)
+
+# Ajustes simples para evitar valores físicamente absurdos
+datos$Peso_Molecular[datos$Peso_Molecular < 150] <- 150
+datos$PSA[datos$PSA < 10] <- 10
+datos$LogP[datos$LogP < -1] <- -1
+
+############################
+# 3. SIMULAR ACTIVIDAD BIOLOGICA CONTINUA
+############################
+# Aquí generamos una variable de respuesta tipo pIC50
+# La actividad depende de varios descriptores + ruido aleatorio
+
+error <- rnorm(n, mean = 0, sd = 0.5)
+
+datos$pIC50 <- 6.5 +
+  0.45 * datos$LogP -
+  0.010 * datos$Peso_Molecular -
+  0.015 * datos$PSA +
+  0.20 * datos$Aromaticidad -
+  0.10 * datos$Flexibilidad +
+  0.12 * datos$HBA +
+  error
+
+# Crear una variable de clasificación: Activo / Inactivo
+# Si la actividad es mayor o igual a 4.5 se considera "Activo"
+
+datos$Clase_Actividad <- ifelse(datos$pIC50 >= 4.5, "Activo", "Inactivo")
+datos$Clase_Actividad <- as.factor(datos$Clase_Actividad)
+
+############################
+# 4. EXPLORACION INICIAL
+############################
+
+head(datos)
+str(datos)
+summary(datos)
+
+# Ver cuántos activos e inactivos hay
+table(datos$Clase_Actividad)
+
+############################
+# 5. SELECCIONAR DESCRIPTORES
+############################
+# Quitamos ID y variables de respuesta para construir la matriz X
+
+X <- datos %>%
+  select(Peso_Molecular, LogP, PSA, HBD, HBA, Flexibilidad, Aromaticidad, Solubilidad)
+
+# Respuestas
+y_reg <- datos$pIC50
+y_clas <- datos$Clase_Actividad
+
+############################
+# 6. ESCALAMIENTO DE DATOS
+############################
+# Muy importante para PCA, SVM y PLS
+
+X_scaled <- scale(X)
+
+############################
+# 7. PARTICION ENTRENAMIENTO / PRUEBA
+############################
+
+set.seed(123)
+train_index <- createDataPartition(y_clas, p = 0.7, list = FALSE)
+
+X_train <- X_scaled[train_index, ]
+X_test  <- X_scaled[-train_index, ]
+
+yreg_train <- y_reg[train_index]
+yreg_test  <- y_reg[-train_index]
+
+yclas_train <- y_clas[train_index]
+yclas_test  <- y_clas[-train_index]
+
+############################
+# 8. PCA - METODO NO SUPERVISADO
+############################
+# No usa la variable respuesta directamente
+
+pca_model <- prcomp(X_scaled, center = TRUE, scale. = TRUE)
+
+# Resumen del PCA
+summary(pca_model)
+
+# Varianza explicada por componente
+var_explicada <- (pca_model$sdev)^2 / sum((pca_model$sdev)^2)
+var_explicada
+
+# Data frame para graficar PC1 y PC2
+pca_scores <- as.data.frame(pca_model$x)
+pca_scores$Clase_Actividad <- datos$Clase_Actividad
+
+# Gráfico PCA
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = Clase_Actividad)) +
+  geom_point(size = 3, alpha = 0.8) +
+  labs(
+    title = "PCA de descriptores moleculares",
+    x = "Componente Principal 1",
+    y = "Componente Principal 2"
+  ) +
+  theme_minimal()
+
+# Cargas (loadings) del PCA
+pca_model$rotation
+
+############################
+# 9. PLS - REGRESION SUPERVISADA
+############################
+# Usa la variable continua pIC50
+
+datos_train_pls <- data.frame(pIC50 = yreg_train, as.data.frame(X_train))
+datos_test_pls  <- data.frame(pIC50 = yreg_test, as.data.frame(X_test))
+
+pls_model <- plsr(
+  pIC50 ~ .,
+  data = datos_train_pls,
+  scale = FALSE,
+  validation = "CV"
+)
+
+summary(pls_model)
+
+# Elegir número de componentes
+validationplot(pls_model, val.type = "MSEP")
+
+# Predicción usando 2 componentes (puedes cambiarlo según el gráfico)
+pred_pls <- predict(pls_model, newdata = datos_test_pls, ncomp = 2)
+pred_pls <- as.vector(pred_pls)
+
+# Métricas para PLS
+rmse_pls <- sqrt(mean((yreg_test - pred_pls)^2))
+r2_pls <- cor(yreg_test, pred_pls)^2
+
+cat("PLS - RMSE:", rmse_pls, "\n")
+cat("PLS - R2:", r2_pls, "\n")
+
+# Gráfico observado vs predicho
+plot(
+  yreg_test, pred_pls,
+  xlab = "pIC50 observado",
+  ylab = "pIC50 predicho",
+  main = "PLS: observado vs predicho",
+  pch = 19
+)
+abline(0, 1, lty = 2)
+
+############################
+# 10. SVM - CLASIFICACION SUPERVISADA
+############################
+# Aquí se usa la variable categórica Activo/Inactivo
+
+datos_train_svm <- data.frame(Clase_Actividad = yclas_train, as.data.frame(X_train))
+datos_test_svm  <- data.frame(Clase_Actividad = yclas_test, as.data.frame(X_test))
+
+svm_model <- svm(
+  Clase_Actividad ~ .,
+  data = datos_train_svm,
+  kernel = "radial",
+  cost = 1,
+  gamma = 0.1
+)
+
+pred_svm <- predict(svm_model, newdata = datos_test_svm)
+
+# Matriz de confusión
+conf_svm <- confusionMatrix(pred_svm, yclas_test)
+conf_svm
+
+############################
+# 11. RANDOM FOREST - CLASIFICACION SUPERVISADA
+############################
+
+set.seed(123)
+
+rf_model <- randomForest(
+  Clase_Actividad ~ .,
+  data = datos_train_svm,
+  ntree = 300,
+  importance = TRUE
+)
+
+print(rf_model)
+
+pred_rf <- predict(rf_model, newdata = datos_test_svm)
+
+# Matriz de confusión
+conf_rf <- confusionMatrix(pred_rf, yclas_test)
+conf_rf
+
+# Importancia de variables
+importance(rf_model)
+varImpPlot(rf_model)
+
+############################
+# 12. COMPARACION DE MODELOS
+############################
+
+# Accuracy de clasificación
+acc_svm <- conf_svm$overall["Accuracy"]
+acc_rf  <- conf_rf$overall["Accuracy"]
+
+cat("Accuracy SVM:", acc_svm, "\n")
+cat("Accuracy Random Forest:", acc_rf, "\n")
+
+# Sensibilidad y especificidad
+cat("SVM - Sensibilidad:\n")
+print(conf_svm$byClass["Sensitivity"])
+
+cat("SVM - Especificidad:\n")
+print(conf_svm$byClass["Specificity"])
+
+cat("RF - Sensibilidad:\n")
+print(conf_rf$byClass["Sensitivity"])
+
+cat("RF - Especificidad:\n")
+print(conf_rf$byClass["Specificity"])
+
+############################
+# 13. TABLA RESUMEN DE RESULTADOS
+############################
+
+resumen <- data.frame(
+  Modelo = c("PLS (regresión)", "SVM (clasificación)", "Random Forest (clasificación)"),
+  Metrica_Principal = c("R2", "Accuracy", "Accuracy"),
+  Valor = c(r2_pls, as.numeric(acc_svm), as.numeric(acc_rf))
+)
+
+print(resumen)
+
+############################
+# 14. GUARDAR EL DATASET SIMULADO
+############################
+# Esto permite compartir el archivo con los alumnos
+
+write.csv(datos, "datos_simulados_practica4.csv", row.names = FALSE)
+
+cat("Archivo guardado: datos_simulados_practica4.csv\n")
