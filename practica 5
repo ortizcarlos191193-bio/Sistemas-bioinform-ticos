@@ -1,0 +1,105 @@
+library(ggplot2)
+library(dplyr)
+
+setwd("directorio/donde/esta/el/archivo")
+
+datos <- read.csv("practica5_compuestos_metabolicos_240.csv")
+
+head(datos)
+str(datos)
+summary(datos)
+dim(datos)
+
+datos_num <- datos[, c("Peso_Molecular", "LogP", "PSA", "HBD", "HBA",
+                       "Flexibilidad", "Anillos_Aromaticos", "LogS",
+                       "pKa", "Eficacia_Metabolica", "Clearance_Predicha",
+                       "Permeabilidad_Caco2")]
+
+colSums(is.na(datos_num))
+
+boxplot(datos_num, las = 2)
+
+datos_scaled <- scale(datos_num)
+
+head(datos_scaled)
+
+set.seed(123)
+
+kmeans_result <- kmeans(datos_scaled, centers = 3, nstart = 25)
+
+kmeans_result$cluster
+table(kmeans_result$cluster)
+
+datos$Cluster <- as.factor(kmeans_result$cluster)
+
+head(datos)
+table(datos$Cluster)
+
+aggregate(datos_num, by = list(Cluster = datos$Cluster), mean)
+
+pca_result <- prcomp(datos_scaled, center = TRUE, scale. = TRUE)
+
+summary(pca_result)
+
+pca_result$rotation
+
+pca_scores <- as.data.frame(pca_result$x)
+pca_scores$Cluster <- datos$Cluster
+pca_scores$Serie_Referencia <- datos$Serie_Referencia
+pca_scores$Compuesto <- datos$Compuesto
+
+plot(pca_result$x[,1], pca_result$x[,2],
+     col = datos$Cluster,
+     pch = 19,
+     xlab = "PC1",
+     ylab = "PC2")
+
+legend("topright",
+       legend = levels(datos$Cluster),
+       col = 1:length(levels(datos$Cluster)),
+       pch = 19)
+
+biplot(pca_result)
+
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = Cluster)) +
+  geom_point(size = 3, alpha = 0.8) +
+  theme_minimal()
+
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = Serie_Referencia)) +
+  geom_point(size = 3, alpha = 0.8) +
+  theme_minimal()
+
+table(datos$Cluster, datos$Serie_Referencia)
+
+split(datos$Compuesto, datos$Cluster)
+
+datos[datos$Cluster == 1, c("Compuesto", "Serie_Referencia")]
+datos[datos$Cluster == 2, c("Compuesto", "Serie_Referencia")]
+datos[datos$Cluster == 3, c("Compuesto", "Serie_Referencia")]
+
+cluster_1 <- datos %>%
+  filter(Cluster == 1) %>%
+  select(Compuesto, Serie_Referencia, Peso_Molecular, LogP, PSA, HBD, HBA,
+         Flexibilidad, Anillos_Aromaticos, LogS, pKa, Eficacia_Metabolica,
+         Clearance_Predicha, Permeabilidad_Caco2)
+
+cluster_2 <- datos %>%
+  filter(Cluster == 2) %>%
+  select(Compuesto, Serie_Referencia, Peso_Molecular, LogP, PSA, HBD, HBA,
+         Flexibilidad, Anillos_Aromaticos, LogS, pKa, Eficacia_Metabolica,
+         Clearance_Predicha, Permeabilidad_Caco2)
+
+cluster_3 <- datos %>%
+  filter(Cluster == 3) %>%
+  select(Compuesto, Serie_Referencia, Peso_Molecular, LogP, PSA, HBD, HBA,
+         Flexibilidad, Anillos_Aromaticos, LogS, pKa, Eficacia_Metabolica,
+         Clearance_Predicha, Permeabilidad_Caco2)
+
+head(cluster_1)
+head(cluster_2)
+head(cluster_3)
+
+write.csv(datos, "practica5_resultados_clusters.csv", row.names = FALSE)
+write.csv(cluster_1, "cluster_1.csv", row.names = FALSE)
+write.csv(cluster_2, "cluster_2.csv", row.names = FALSE)
+write.csv(cluster_3, "cluster_3.csv", row.names = FALSE)
