@@ -1,0 +1,114 @@
+# ==========================================
+# PARTE 1. LECTURA DE FASTA Y EVALUACIÓN
+# DIDÁCTICA DE REGIONES CANDIDATAS
+# ==========================================
+
+# Archivos FASTA descargados desde GenBank
+# Cambiar por los nombres reales de los archivos
+archivos <- c("gen1.fasta", "gen2.fasta", "gen3.fasta")
+
+# Función para leer FASTA simple
+leer_fasta_simple <- function(archivo) {
+  lineas <- readLines(archivo, warn = FALSE)
+  encabezado <- lineas[grep("^>", lineas)[1]]
+  secuencia <- paste(lineas[!grepl("^>", lineas)], collapse = "")
+  secuencia <- toupper(gsub("\\s+", "", secuencia))
+  
+  return(list(
+    header = encabezado,
+    sequence = secuencia
+  ))
+}
+
+# Leer todos los archivos
+secuencias <- lapply(archivos, leer_fasta_simple)
+names(secuencias) <- gsub("\\.fasta$", "", archivos)
+
+# Función para calcular GC
+calc_gc <- function(seq) {
+  bases <- strsplit(seq, "")[[1]]
+  gc <- sum(bases %in% c("G", "C"))
+  return((gc / length(bases)) * 100)
+}
+
+# Función para estimar Tm simple (Wallace)
+calc_tm <- function(seq) {
+  bases <- strsplit(seq, "")[[1]]
+  a <- sum(bases == "A")
+  t <- sum(bases == "T")
+  g <- sum(bases == "G")
+  c <- sum(bases == "C")
+  tm <- 2 * (a + t) + 4 * (g + c)
+  return(tm)
+}
+
+# Resumen global de secuencias
+resumen_genes <- data.frame()
+
+for (nombre in names(secuencias)) {
+  seq_actual <- secuencias[[nombre]]$sequence
+  
+  resumen_genes <- rbind(
+    resumen_genes,
+    data.frame(
+      gen = nombre,
+      longitud_total = nchar(seq_actual),
+      gc_global = round(calc_gc(seq_actual), 2),
+      stringsAsFactors = FALSE
+    )
+  )
+}
+
+print(resumen_genes)
+
+# Función para evaluar ventanas de longitud fija
+evaluar_ventanas <- function(seq, gene_name, ventana = 20) {
+  resultados <- data.frame()
+  
+  for (i in 1:(nchar(seq) - ventana + 1)) {
+    fragmento <- substr(seq, i, i + ventana - 1)
+    gc <- calc_gc(fragmento)
+    tm <- calc_tm(fragmento)
+    
+    resultados <- rbind(
+      resultados,
+      data.frame(
+        gen = gene_name,
+        inicio = i,
+        fin = i + ventana - 1,
+        longitud = ventana,
+        gc = round(gc, 2),
+        tm = tm,
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+  
+  return(resultados)
+}
+
+# Aplicar a cada secuencia
+tabla_ventanas <- data.frame()
+
+for (nombre in names(secuencias)) {
+  seq_actual <- secuencias[[nombre]]$sequence
+  temp <- evaluar_ventanas(seq_actual, nombre, ventana = 20)
+  tabla_ventanas <- rbind(tabla_ventanas, temp)
+}
+
+# Filtrado didáctico
+# Puedes ajustar estos criterios para la práctica
+candidatas <- subset(
+  tabla_ventanas,
+  gc >= 40 & gc <= 60 & tm >= 58 & tm <= 66
+)
+
+# Ver algunas regiones candidatas
+head(candidatas, 20)
+
+# Resumen del número de ventanas aceptadas por gen
+table(candidatas$gen)
+
+# Guardar resultados
+write.csv(resumen_genes, "resumen_genes.csv", row.names = FALSE)
+write.csv(candidatas, "regiones_candidatas.csv", row.names = FALSE)
