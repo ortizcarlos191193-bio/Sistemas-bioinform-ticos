@@ -96,8 +96,7 @@ for (nombre in names(secuencias)) {
   tabla_ventanas <- rbind(tabla_ventanas, temp)
 }
 
-# Filtrado didáctico
-# Puedes ajustar estos criterios para la práctica
+
 candidatas <- subset(
   tabla_ventanas,
   gc >= 40 & gc <= 60 & tm >= 58 & tm <= 66
