@@ -1,0 +1,468 @@
+############################
+
+# 1. INSTALAR Y CARGAR PAQUETES
+
+############################
+
+
+
+# Instalar solo una vez si es necesario
+
+install.packages(c("ggplot2", "dplyr", "caret", "e1071", "randomForest", "factoextra"))
+
+
+
+library(ggplot2)
+
+library(dplyr)
+
+library(caret)
+
+library(e1071)
+
+library(randomForest)
+
+library(factoextra)
+
+
+
+############################
+
+# 2. FIJAR SEMILLA
+
+############################
+
+
+
+set.seed(123)
+
+
+
+############################
+
+# 3. GENERAR BASE DE DATOS SIMULADA
+
+############################
+
+
+
+n <- 120
+
+
+
+datos <- data.frame(
+
+ Compuesto = paste0("Cmp_", 1:n),
+
+ PesoMol = round(rnorm(n, mean = 350, sd = 60), 2),
+
+ LogP = round(rnorm(n, mean = 2.8, sd = 1.2), 2),
+
+ TPSA = round(rnorm(n, mean = 85, sd = 25), 2),
+
+ HBD = sample(0:5, n, replace = TRUE),
+
+ HBA = sample(1:10, n, replace = TRUE),
+
+ RotBonds = sample(0:12, n, replace = TRUE),
+
+ AnillosAromaticos = sample(0:4, n, replace = TRUE),
+
+ Complejidad = round(rnorm(n, mean = 500, sd = 120), 2)
+
+)
+
+
+
+# Evitar valores negativos no realistas
+
+datos$PesoMol[datos$PesoMol < 100] <- 100
+
+datos$TPSA[datos$TPSA < 5] <- 5
+
+datos$Complejidad[datos$Complejidad < 100] <- 100
+
+datos$LogP[datos$LogP < -1] <- -1
+
+
+
+############################
+
+# 4. GENERAR VARIABLE DE ACTIVIDAD BIOLOGICA
+
+############################
+
+# Simulación estilo QSAR:
+
+# mayor LogP y muchos anillos aromáticos aumentan actividad,
+
+# exceso de peso molecular y TPSA la disminuyen
+
+
+
+ruido <- rnorm(n, mean = 0, sd = 8)
+
+
+
+datos$Actividad_IC50 <- round(
+
+ 80 - 
+
+  4.5 * datos$LogP +
+
+  0.08 * datos$PesoMol +
+
+  0.15 * datos$TPSA -
+
+  2.5 * datos$AnillosAromaticos -
+
+  1.8 * datos$HBD +
+
+  0.9 * datos$RotBonds +
+
+  ruido,
+
+ 2
+
+)
+
+
+
+# En este ejemplo, menor IC50 = más activo
+
+datos$Clase <- ifelse(datos$Actividad_IC50 < median(datos$Actividad_IC50),
+
+           "Activo", "Inactivo")
+
+datos$Clase <- as.factor(datos$Clase)
+
+
+
+############################
+
+# 5. EXPLORACION INICIAL
+
+############################
+
+
+
+str(datos)
+
+summary(datos)
+
+head(datos)
+
+
+
+table(datos$Clase)
+
+
+
+############################
+
+# 6. GRAFICO DISPERSION SIMPLE
+
+############################
+
+
+
+ggplot(datos, aes(x = LogP, y = Actividad_IC50, color = Clase)) +
+
+ geom_point(size = 3) +
+
+ labs(
+
+  title = "Relación entre LogP y Actividad Biológica",
+
+  x = "LogP",
+
+  y = "Actividad (IC50)"
+
+ ) +
+
+ theme_minimal()
+
+
+
+############################
+
+# 7. MATRIZ DE CORRELACION
+
+############################
+
+
+
+variables_numericas <- datos %>%
+
+ select(PesoMol, LogP, TPSA, HBD, HBA, RotBonds, AnillosAromaticos, Complejidad, Actividad_IC50)
+
+
+
+correlaciones <- cor(variables_numericas)
+
+print(correlaciones)
+
+
+
+############################
+
+# 8. PCA (ANALISIS DE COMPONENTES PRINCIPALES)
+
+############################
+
+
+
+X_pca <- datos %>%
+
+ select(PesoMol, LogP, TPSA, HBD, HBA, RotBonds, AnillosAromaticos, Complejidad)
+
+
+
+pca_modelo <- prcomp(X_pca, center = TRUE, scale. = TRUE)
+
+
+
+summary(pca_modelo)
+
+print(pca_modelo$rotation)
+
+
+
+# Visualización PCA
+
+fviz_pca_ind(
+
+ pca_modelo,
+
+ geom.ind = "point",
+
+ col.ind = datos$Clase,
+
+ addEllipses = TRUE,
+
+ legend.title = "Clase"
+
+)
+
+
+
+############################
+
+# 9. CLUSTERING (K-MEANS)
+
+############################
+
+
+
+X_scaled <- scale(X_pca)
+
+
+
+set.seed(123)
+
+kmeans_modelo <- kmeans(X_scaled, centers = 3, nstart = 25)
+
+
+
+datos$Cluster <- as.factor(kmeans_modelo$cluster)
+
+
+
+table(datos$Cluster)
+
+
+
+# Visualización usando las dos primeras variables del PCA
+
+pca_scores <- as.data.frame(pca_modelo$x)
+
+
+
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = datos$Cluster)) +
+
+ geom_point(size = 3) +
+
+ labs(
+
+  title = "Clustering de compuestos sobre espacio PCA",
+
+  x = "PC1",
+
+  y = "PC2",
+
+  color = "Cluster"
+
+ ) +
+
+ theme_minimal()
+
+
+
+############################
+
+# 10. PARTICION DE DATOS
+
+############################
+
+
+
+set.seed(123)
+
+train_index <- createDataPartition(datos$Clase, p = 0.7, list = FALSE)
+
+
+
+train_data <- datos[train_index, ]
+
+test_data <- datos[-train_index, ]
+
+
+
+############################
+
+# 11. SVM PARA CLASIFICACION
+
+############################
+
+
+
+svm_modelo <- svm(
+
+ Clase ~ PesoMol + LogP + TPSA + HBD + HBA + RotBonds + AnillosAromaticos + Complejidad,
+
+ data = train_data,
+
+ kernel = "radial"
+
+)
+
+
+
+pred_svm <- predict(svm_modelo, newdata = test_data)
+
+
+
+cat("\nMatriz de confusión SVM:\n")
+
+confusionMatrix(pred_svm, test_data$Clase)
+
+
+
+############################
+
+# 12. RANDOM FOREST PARA CLASIFICACION
+
+############################
+
+
+
+rf_modelo <- randomForest(
+
+ Clase ~ PesoMol + LogP + TPSA + HBD + HBA + RotBonds + AnillosAromaticos + Complejidad,
+
+ data = train_data,
+
+ ntree = 300,
+
+ importance = TRUE
+
+)
+
+
+
+pred_rf <- predict(rf_modelo, newdata = test_data)
+
+
+
+cat("\nMatriz de confusión Random Forest:\n")
+
+confusionMatrix(pred_rf, test_data$Clase)
+
+
+
+# Importancia de variables
+
+importance(rf_modelo)
+
+varImpPlot(rf_modelo)
+
+
+
+############################
+
+# 13. MODELO TIPO QSAR (REGRESION LINEAL)
+
+############################
+
+
+
+qsar_modelo <- lm(
+
+ Actividad_IC50 ~ PesoMol + LogP + TPSA + HBD + HBA + RotBonds + AnillosAromaticos + Complejidad,
+
+ data = train_data
+
+)
+
+
+
+summary(qsar_modelo)
+
+
+
+pred_qsar <- predict(qsar_modelo, newdata = test_data)
+
+
+
+# Comparación visual real vs predicho
+
+resultados_qsar <- data.frame(
+
+ Real = test_data$Actividad_IC50,
+
+ Predicho = pred_qsar
+
+)
+
+
+
+ggplot(resultados_qsar, aes(x = Real, y = Predicho)) +
+
+ geom_point(size = 3) +
+
+ geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+
+ labs(
+
+  title = "Modelo QSAR: valores reales vs predichos",
+
+  x = "Actividad real (IC50)",
+
+  y = "Actividad predicha"
+
+ ) +
+
+ theme_minimal()
+
+
+
+############################
+
+# 14. ERROR DEL MODELO QSAR
+
+############################
+
+
+
+rmse <- sqrt(mean((resultados_qsar$Real - resultados_qsar$Predicho)^2))
+
+r2 <- cor(resultados_qsar$Real, resultados_qsar$Predicho)^2
+
+
+
+cat("\nDesempeño del modelo QSAR:\n")
+
+cat("RMSE =", round(rmse, 3), "\n")
+
+cat("R² =", round(r2, 3), "\n")
+
