@@ -1,0 +1,315 @@
+############################################################
+# EXAMEN FINAL SISTEMAS BIOINFORMÁTICOS
+# M. EN C. CARLOS ALBERTO ORTIZ-CRUZ
+# 2026-2
+# 
+############################################################
+
+############################
+# 1. INSTALAR Y CARGAR PAQUETES
+############################
+
+# # Instalar solo una vez si es necesario
+install.packages(c("ggplot2", "dplyr", "caret", "e1071", "randomForest"))
+
+library(ggplot2)
+library(dplyr)
+library(caret)
+library(e1071)
+library(randomForest)
+
+############################
+# 2. FIJAR SEMILLA
+############################
+
+set.seed(123)
+
+############################
+# 3. GENERAR BASE DE DATOS SIMULADA
+############################
+
+n_grupo <- 40
+n_total <- n_grupo * 3
+
+GrupoFarmaco <- c(rep("ISRS", n_grupo),
+                  rep("IRSN", n_grupo),
+                  rep("Triciclico", n_grupo))
+
+datos <- data.frame(
+  Compuesto = paste0("Cmp_", 1:n_total),
+  GrupoFarmaco = GrupoFarmaco
+)
+
+############################
+# 4. GENERAR DESCRIPTORES 
+############################
+
+
+datos$PesoMol <- c(
+  rnorm(n_grupo, mean = 320, sd = 20),   # ISRS
+  rnorm(n_grupo, mean = 290, sd = 18),   # IRSN
+  rnorm(n_grupo, mean = 360, sd = 25)    # Tricíclicos
+)
+
+datos$LogP <- c(
+  rnorm(n_grupo, mean = 3.8, sd = 0.4),  # ISRS
+  rnorm(n_grupo, mean = 2.6, sd = 0.3),  # IRSN
+  rnorm(n_grupo, mean = 5.0, sd = 0.5)   # Tricíclicos
+)
+
+datos$TPSA <- c(
+  rnorm(n_grupo, mean = 45, sd = 8),     # ISRS
+  rnorm(n_grupo, mean = 70, sd = 10),    # IRSN
+  rnorm(n_grupo, mean = 30, sd = 7)      # Tricíclicos
+)
+
+datos$HBD <- c(
+  sample(0:1, n_grupo, replace = TRUE),  # ISRS
+  sample(1:3, n_grupo, replace = TRUE),  # IRSN
+  sample(0:1, n_grupo, replace = TRUE)   # Tricíclicos
+)
+
+datos$HBA <- c(
+  sample(2:5, n_grupo, replace = TRUE),  # ISRS
+  sample(4:7, n_grupo, replace = TRUE),  # IRSN
+  sample(1:4, n_grupo, replace = TRUE)   # Tricíclicos
+)
+
+datos$RotBonds <- c(
+  sample(4:8, n_grupo, replace = TRUE),  # ISRS
+  sample(5:9, n_grupo, replace = TRUE),  # IRSN
+  sample(2:5, n_grupo, replace = TRUE)   # Tricíclicos
+)
+
+datos$AnillosAromaticos <- c(
+  sample(2:3, n_grupo, replace = TRUE),  # ISRS
+  sample(1:2, n_grupo, replace = TRUE),  # IRSN
+  sample(3:4, n_grupo, replace = TRUE)   # Tricíclicos
+)
+
+datos$Complejidad <- c(
+  rnorm(n_grupo, mean = 420, sd = 40),   # ISRS
+  rnorm(n_grupo, mean = 380, sd = 35),   # IRSN
+  rnorm(n_grupo, mean = 520, sd = 50)    # Tricíclicos
+)
+
+# Ajustes para evitar valores no realistas
+datos$PesoMol <- round(pmax(datos$PesoMol, 100), 2)
+datos$LogP <- round(pmax(datos$LogP, -1), 2)
+datos$TPSA <- round(pmax(datos$TPSA, 5), 2)
+datos$Complejidad <- round(pmax(datos$Complejidad, 100), 2)
+
+############################
+# 5. GENERAR IC50 
+############################
+
+ruido <- rnorm(n_total, mean = 0, sd = 6)
+
+efecto_grupo <- ifelse(datos$GrupoFarmaco == "ISRS", -4,
+                       ifelse(datos$GrupoFarmaco == "IRSN", 2, -8))
+
+datos$IC50 <-  round(
+  55 +
+    0.05 * datos$PesoMol +
+    1.8 * datos$LogP -
+    0.22 * datos$TPSA -
+    1.5 * datos$HBD +
+    0.8 * datos$HBA +
+    0.6 * datos$RotBonds -
+    2.5 * datos$AnillosAromaticos +
+    0.015 * datos$Complejidad +
+    efecto_grupo +
+    ruido,
+  2
+)
+
+############################
+# 6. CLASE DE ACTIVIDAD
+############################
+
+
+corte_ic50 <- quantile(datos$IC50, probs = 0.5)
+
+datos$ClaseActividad <- ifelse(datos$IC50 < corte_ic50, "AltaPotencia", "BajaPotencia")
+datos$ClaseActividad <- as.factor(datos$ClaseActividad)
+datos$GrupoFarmaco <- as.factor(datos$GrupoFarmaco)
+
+############################
+# 7. EXPLORACION GENERAL
+############################
+
+str(datos)
+summary(datos)
+head(datos)
+
+table(datos$GrupoFarmaco)
+table(datos$ClaseActividad)
+
+############################
+# 8. GRAFICO DE DISPERSION SIMPLE
+############################
+
+ggplot(datos, aes(x = LogP, y = IC50, color = GrupoFarmaco)) +
+  geom_point(size = 3) +
+  labs(
+    title = "Relación entre LogP e IC50",
+    x = "LogP",
+    y = "IC50"
+  ) +
+  theme_minimal()
+
+############################
+# 9. MATRIZ DE CORRELACION
+############################
+
+variables_numericas <- datos %>%
+  select(PesoMol, LogP, TPSA, HBD, HBA, RotBonds, AnillosAromaticos, Complejidad, IC50)
+
+correlaciones <- cor(variables_numericas)
+print(correlaciones)
+
+############################
+# 10. PCA
+############################
+
+X_pca <- datos %>%
+  select(PesoMol, LogP, TPSA, HBD, HBA, RotBonds, AnillosAromaticos, Complejidad)
+
+pca_modelo <- prcomp(X_pca, center = TRUE, scale. = TRUE)
+
+summary(pca_modelo)
+print(pca_modelo$rotation)
+
+# Scores del PCA
+pca_scores <- as.data.frame(pca_modelo$x)
+pca_scores$GrupoFarmaco <- datos$GrupoFarmaco
+
+# Gráfica PCA
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = GrupoFarmaco)) +
+  geom_point(size = 3, alpha = 0.8) +
+  stat_ellipse(aes(fill = GrupoFarmaco), geom = "polygon", alpha = 0.15, color = NA) +
+  labs(
+    title = "PCA de antidepresivos",
+    x = paste0("PC1 (", round(summary(pca_modelo)$importance[2,1] * 100, 1), "%)"),
+    y = paste0("PC2 (", round(summary(pca_modelo)$importance[2,2] * 100, 1), "%)")
+  ) +
+  theme_minimal()
+
+############################
+# 11. CLUSTERING (K-MEANS)
+############################
+
+X_scaled <- scale(X_pca)
+
+set.seed(123)
+kmeans_modelo <- kmeans(X_scaled, centers = 3, nstart = 25)
+
+datos$Cluster <- as.factor(kmeans_modelo$cluster)
+
+table(datos$Cluster, datos$GrupoFarmaco)
+
+# Graficar clusters sobre espacio PCA
+pca_scores$Cluster <- datos$Cluster
+
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = Cluster)) +
+  geom_point(size = 3, alpha = 0.8) +
+  labs(
+    title = "Clusters en el espacio PCA",
+    x = "PC1",
+    y = "PC2"
+  ) +
+  theme_minimal()
+
+############################
+# 12. PARTICION DE DATOS
+############################
+
+set.seed(123)
+train_index <- createDataPartition(datos$GrupoFarmaco, p = 0.7, list = FALSE)
+
+train_data <- datos[train_index, ]
+test_data  <- datos[-train_index, ]
+
+############################
+# 13. SVM PARA CLASIFICAR GRUPO FARMACOLOGICO
+############################
+
+svm_modelo <- svm(
+  GrupoFarmaco ~ PesoMol + LogP + TPSA + HBD + HBA + RotBonds + AnillosAromaticos + Complejidad,
+  data = train_data,
+  kernel = "radial"
+)
+
+pred_svm <- predict(svm_modelo, newdata = test_data)
+
+cat("\nMatriz de confusión SVM (Grupo farmacológico):\n")
+print(confusionMatrix(pred_svm, test_data$GrupoFarmaco))
+
+############################
+# 14. RANDOM FOREST PARA CLASIFICAR GRUPO FARMACOLOGICO
+############################
+
+rf_modelo <- randomForest(
+  GrupoFarmaco ~ PesoMol + LogP + TPSA + HBD + HBA + RotBonds + AnillosAromaticos + Complejidad,
+  data = train_data,
+  ntree = 300,
+  importance = TRUE
+)
+
+pred_rf <- predict(rf_modelo, newdata = test_data)
+
+cat("\nMatriz de confusión Random Forest (Grupo farmacológico):\n")
+print(confusionMatrix(pred_rf, test_data$GrupoFarmaco))
+
+# Importancia de variables
+print(importance(rf_modelo))
+varImpPlot(rf_modelo)
+
+############################
+# 15. MODELO QSAR (REGRESION LINEAL)
+############################
+# Aquí la variable respuesta es IC50.
+
+qsar_modelo <- lm(
+  IC50 ~ PesoMol + LogP + TPSA + HBD + HBA + RotBonds + AnillosAromaticos + Complejidad,
+  data = train_data
+)
+
+summary(qsar_modelo)
+
+pred_qsar <- predict(qsar_modelo, newdata = test_data)
+
+resultados_qsar <- data.frame(
+  Real = test_data$IC50,
+  Predicho = pred_qsar,
+  GrupoFarmaco = test_data$GrupoFarmaco
+)
+
+ggplot(resultados_qsar, aes(x = Real, y = Predicho, color = GrupoFarmaco)) +
+  geom_point(size = 3) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    title = "QSAR: IC50 real vs predicho",
+    x = "IC50 real",
+    y = "IC50 predicho"
+  ) +
+  theme_minimal()
+
+############################
+# 16. DESEMPEÑO DEL MODELO QSAR
+############################
+
+rmse <- sqrt(mean((resultados_qsar$Real - resultados_qsar$Predicho)^2))
+r2 <- cor(resultados_qsar$Real, resultados_qsar$Predicho)^2
+
+cat("\nDesempeño del modelo QSAR:\n")
+cat("RMSE =", round(rmse, 3), "\n")
+cat("R² =", round(r2, 3), "\n")
+
+############################
+# 17. GUARDAR BASE
+############################
+
+write.csv(datos, "antidepresivos_simulados_qsar.csv", row.names = FALSE)
+
+cat("\nArchivo guardado: antidepresivos_simulados_qsar.csv\n")
